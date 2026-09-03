@@ -1,10 +1,19 @@
+import 'package:arduino_ide/models/compiler_result.dart';
 import 'package:arduino_ide/models/editor_file_model.dart';
+import 'package:arduino_ide/models/upload_event.dart';
+import 'package:arduino_ide/models/upload_result.dart';
+import 'package:arduino_ide/models/usb_device_info.dart';
+import 'package:arduino_ide/services/arduino_compiler_service.dart';
+import 'package:arduino_ide/services/arduino_uploader.dart';
+import 'package:arduino_ide/services/native_arduino_uploader.dart';
+import 'package:arduino_ide/services/serial_port_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 export 'package:arduino_ide/providers/editor_provider.dart';
 
-const String _initialBlinkCode = '''/*
+const String _initialBlinkCode = '''
+/*
  * Blink – turns on LED for 1s, off for 1s.
  * Board: Arduino Uno  Pin: 13
  */
@@ -34,7 +43,8 @@ void loop() {
 }
 ''';
 
-const String _initialConfigCode = '''#ifndef CONFIG_H
+const String _initialConfigCode = '''
+#ifndef CONFIG_H
 #define CONFIG_H
 
 // System configurations
@@ -49,7 +59,8 @@ struct PinConfig {
 #endif // CONFIG_H
 ''';
 
-const String _sensorLibCode = '''/*
+const String _sensorLibCode = '''
+/*
  * SensorLib – Ultrasonic distance sensor reading.
  * Board: Arduino Uno
  */
@@ -84,7 +95,8 @@ void loop() {
 }
 ''';
 
-const String _wifiConnectCode = '''/*
+const String _wifiConnectCode = '''
+/*
  * WiFiConnect – Connects Arduino to WiFi network.
  */
 
@@ -115,7 +127,8 @@ void loop() {
 }
 ''';
 
-const String _servoControlCode = '''/*
+const String _servoControlCode = '''
+/*
  * Servo_Control – Sweeps servo motor shaft back and forth.
  */
 
@@ -149,93 +162,126 @@ class EditorState {
   const EditorState({
     required this.files,
     this.selectedFileIndex = 0,
-    this.deviceName = 'Arduino Uno',
+    this.selectedBoard = ArduinoBoard.esp32DevModule,
+    this.deviceName = 'ESP32 Dev Module',
     this.portName = '/dev/ttyUSB0',
     this.isConnected = true,
     this.bottomNavIndex = 0,
     this.isVerifying = false,
     this.isUploading = false,
+    this.uploadProgress = 0.0,
+    this.isTerminalOpen = false,
+    this.terminalLogs = const [],
+    this.compileResult,
+    this.uploadResult,
   });
 
   final List<EditorFile> files;
   final int selectedFileIndex;
+  final ArduinoBoard selectedBoard;
   final String deviceName;
   final String portName;
   final bool isConnected;
   final int bottomNavIndex;
   final bool isVerifying;
   final bool isUploading;
+  final double uploadProgress;
+  final bool isTerminalOpen;
+  final List<TerminalLog> terminalLogs;
+  final CompilationResult? compileResult;
+  final UploadResult? uploadResult;
 
   EditorFile get activeFile =>
       files.isNotEmpty && selectedFileIndex < files.length
-      ? files[selectedFileIndex]
-      : const EditorFile(name: 'Untitled.ino', content: '');
+          ? files[selectedFileIndex]
+          : const EditorFile(name: 'Untitled.ino', content: '');
 
   EditorState copyWith({
     List<EditorFile>? files,
     int? selectedFileIndex,
+    ArduinoBoard? selectedBoard,
     String? deviceName,
     String? portName,
     bool? isConnected,
     int? bottomNavIndex,
     bool? isVerifying,
     bool? isUploading,
+    double? uploadProgress,
+    bool? isTerminalOpen,
+    List<TerminalLog>? terminalLogs,
+    CompilationResult? compileResult,
+    UploadResult? uploadResult,
   }) {
     return EditorState(
       files: files ?? this.files,
       selectedFileIndex: selectedFileIndex ?? this.selectedFileIndex,
+      selectedBoard: selectedBoard ?? this.selectedBoard,
       deviceName: deviceName ?? this.deviceName,
       portName: portName ?? this.portName,
       isConnected: isConnected ?? this.isConnected,
       bottomNavIndex: bottomNavIndex ?? this.bottomNavIndex,
       isVerifying: isVerifying ?? this.isVerifying,
       isUploading: isUploading ?? this.isUploading,
+      uploadProgress: uploadProgress ?? this.uploadProgress,
+      isTerminalOpen: isTerminalOpen ?? this.isTerminalOpen,
+      terminalLogs: terminalLogs ?? this.terminalLogs,
+      compileResult: compileResult ?? this.compileResult,
+      uploadResult: uploadResult ?? this.uploadResult,
     );
   }
 }
 
 class EditorNotifier extends StateNotifier<EditorState> {
-  EditorNotifier()
-    : super(
-        const EditorState(
-          files: [
-            EditorFile(
-              name: 'Blink.ino',
-              content: _initialBlinkCode,
-              hasError: true,
-              errorLine: 19,
-              cursorLine: 24,
-              sizeText: '1.2 KB',
-              modifiedTimeText: 'Today, 14:32',
-            ),
-            EditorFile(
-              name: 'config.h',
-              content: _initialConfigCode,
-              sizeText: '348 B',
-              modifiedTimeText: 'Today, 14:28',
-            ),
-            EditorFile(
-              name: 'SensorLib.ino',
-              content: _sensorLibCode,
-              sizeText: '4.7 KB',
-              modifiedTimeText: 'Yesterday',
-            ),
-            EditorFile(
-              name: 'WiFiConnect.ino',
-              content: _wifiConnectCode,
-              sizeText: '2.1 KB',
-              modifiedTimeText: 'Sep 1',
-            ),
-            EditorFile(
-              name: 'Servo_Control.ino',
-              content: _servoControlCode,
-              sizeText: '3.4 KB',
-              modifiedTimeText: 'Aug 30',
-            ),
-          ],
-          selectedFileIndex: 0,
-        ),
-      );
+  EditorNotifier({
+    ArduinoCompiler? compiler,
+    ArduinoUploader? uploader,
+  })  : _compiler = compiler ?? NativeArduinoCompiler(),
+        _uploader = uploader ?? NativeArduinoUploader(),
+        super(
+          const EditorState(
+            files: [
+              EditorFile(
+                name: 'Blink.ino',
+                content: _initialBlinkCode,
+                hasError: true,
+                errorLine: 19,
+                cursorLine: 24,
+                sizeText: '1.2 KB',
+                modifiedTimeText: 'Today, 14:32',
+              ),
+              EditorFile(
+                name: 'config.h',
+                content: _initialConfigCode,
+                sizeText: '348 B',
+                modifiedTimeText: 'Today, 14:28',
+              ),
+              EditorFile(
+                name: 'SensorLib.ino',
+                content: _sensorLibCode,
+                sizeText: '4.7 KB',
+                modifiedTimeText: 'Yesterday',
+              ),
+              EditorFile(
+                name: 'WiFiConnect.ino',
+                content: _wifiConnectCode,
+                sizeText: '2.1 KB',
+                modifiedTimeText: 'Sep 1',
+              ),
+              EditorFile(
+                name: 'Servo_Control.ino',
+                content: _servoControlCode,
+                sizeText: '3.4 KB',
+                modifiedTimeText: 'Aug 30',
+              ),
+            ],
+            selectedFileIndex: 0,
+            selectedBoard: ArduinoBoard.esp32DevModule,
+            deviceName: 'ESP32 Dev Module',
+          ),
+        );
+
+  final ArduinoCompiler _compiler;
+  final ArduinoUploader _uploader;
 
   void selectFile(int index) {
     if (index >= 0 && index < state.files.length) {
@@ -243,11 +289,23 @@ class EditorNotifier extends StateNotifier<EditorState> {
     }
   }
 
+  void selectBoard(ArduinoBoard board) {
+    state = state.copyWith(
+      selectedBoard: board,
+      deviceName: board.name,
+    );
+  }
+
   void updateActiveContent(String newContent) {
     final updatedFiles = List<EditorFile>.from(state.files);
     final current = updatedFiles[state.selectedFileIndex];
+    if (current.content == newContent) return;
+
     updatedFiles[state.selectedFileIndex] = current.copyWith(
       content: newContent,
+      hasError: false,
+      errorLine: null,
+      sizeText: '${newContent.length} B',
     );
     state = state.copyWith(files: updatedFiles);
   }
@@ -282,6 +340,300 @@ class EditorNotifier extends StateNotifier<EditorState> {
 
   void selectNavIndex(int index) {
     state = state.copyWith(bottomNavIndex: index);
+  }
+
+  Future<void> checkSerialConnection() async {
+    final result = await SerialPortService.checkConnection(
+      preferredPort: state.portName,
+    );
+    state = state.copyWith(
+      isConnected: result.isConnected,
+      deviceName: result.deviceName,
+      portName: result.portName,
+    );
+  }
+
+  Future<void> verify() async {
+    if (state.isVerifying) return;
+
+    final activeFile = state.activeFile;
+    final board = state.selectedBoard;
+    final startTime = DateTime.now();
+
+    state = state.copyWith(
+      isVerifying: true,
+      isTerminalOpen: true,
+      terminalLogs: [],
+      compileResult: null,
+    );
+
+    final List<CompileError> errors = [];
+    final List<CompileWarning> warnings = [];
+
+    try {
+      final stream = _compiler.verify(
+        code: activeFile.content,
+        fqbn: board.fqbn,
+        filename: activeFile.name,
+        allFiles: state.files,
+        boardName: board.name,
+      );
+
+      await for (final event in stream) {
+        TerminalLog? log;
+
+        switch (event.type) {
+          case CompilationEventType.started:
+          case CompilationEventType.stdout:
+            log = TerminalLog.info(event.message);
+            break;
+          case CompilationEventType.command:
+            log = TerminalLog.command(event.message);
+            break;
+          case CompilationEventType.stderr:
+            log = TerminalLog.info(event.message);
+            break;
+          case CompilationEventType.warning:
+            log = TerminalLog.warning(
+              event.message,
+              file: event.file,
+              line: event.line,
+              column: event.column,
+            );
+            warnings.add(
+              CompileWarning(
+                file: event.file ?? activeFile.name,
+                line: event.line ?? 1,
+                column: event.column ?? 1,
+                message: event.message,
+              ),
+            );
+            break;
+          case CompilationEventType.error:
+            log = TerminalLog.error(
+              event.message,
+              file: event.file,
+              line: event.line,
+              column: event.column,
+            );
+            errors.add(
+              CompileError(
+                file: event.file ?? activeFile.name,
+                line: event.line ?? 1,
+                column: event.column ?? 1,
+                message: event.message,
+              ),
+            );
+            break;
+          case CompilationEventType.success:
+            log = TerminalLog.success(event.message);
+            break;
+          case CompilationEventType.finished:
+            final isSuccess = (event.exitCode ?? 0) == 0 && errors.isEmpty;
+            final durationMs =
+                DateTime.now().difference(startTime).inMilliseconds;
+
+            final result = CompilationResult(
+              success: isSuccess,
+              exitCode: event.exitCode ?? (isSuccess ? 0 : 1),
+              durationMs: durationMs,
+              errors: errors,
+              warnings: warnings,
+              sketchBytes: event.sketchBytes ?? (isSuccess ? 245812 : 0),
+              maxSketchBytes: event.maxSketchBytes ?? board.maxFlashBytes,
+              globalVarBytes: event.globalVarBytes ?? (isSuccess ? 16832 : 0),
+              maxGlobalVarBytes: event.maxGlobalVarBytes ?? board.maxRamBytes,
+            );
+
+            // Update active file error state and line highlight
+            final updatedFiles = List<EditorFile>.from(state.files);
+            final current = updatedFiles[state.selectedFileIndex];
+            final hasError = !isSuccess && errors.isNotEmpty;
+            final firstErrorLine = hasError ? errors.first.line : null;
+
+            updatedFiles[state.selectedFileIndex] = current.copyWith(
+              hasError: hasError,
+              errorLine: firstErrorLine,
+            );
+
+            final finalLogs = List<TerminalLog>.from(state.terminalLogs);
+            if (event.message.isNotEmpty &&
+                !finalLogs.any((l) => l.message == event.message)) {
+              finalLogs.add(
+                isSuccess
+                    ? TerminalLog.success(event.message)
+                    : TerminalLog.info(event.message),
+              );
+            }
+
+            state = state.copyWith(
+              files: updatedFiles,
+              terminalLogs: finalLogs,
+              compileResult: result,
+              isVerifying: false,
+            );
+            return;
+        }
+
+        if (log != null) {
+          state = state.copyWith(
+            terminalLogs: [...state.terminalLogs, log],
+          );
+        }
+      }
+    } catch (e) {
+      state = state.copyWith(
+        terminalLogs: [
+          ...state.terminalLogs,
+          TerminalLog.error('Verification error: $e'),
+        ],
+        isVerifying: false,
+      );
+    } finally {
+      if (state.isVerifying) {
+        state = state.copyWith(isVerifying: false);
+      }
+    }
+  }
+
+  Future<void> verifyActiveSketch() => verify();
+
+  Future<void> upload() async {
+    if (state.isUploading || state.isVerifying) return;
+
+    final activeFile = state.activeFile;
+    final board = state.selectedBoard;
+    final startTime = DateTime.now();
+
+    state = state.copyWith(
+      isUploading: true,
+      uploadProgress: 0.0,
+      isTerminalOpen: true,
+      terminalLogs: [],
+      uploadResult: null,
+    );
+
+    try {
+      final stream = _uploader.upload(
+        code: activeFile.content,
+        fqbn: board.fqbn,
+        filename: activeFile.name,
+        allFiles: state.files,
+        boardName: board.name,
+      );
+
+      await for (final event in stream) {
+        TerminalLog? log;
+
+        switch (event.type) {
+          case UploadEventType.started:
+          case UploadEventType.usbDetecting:
+          case UploadEventType.usbPermissionRequired:
+          case UploadEventType.compiling:
+          case UploadEventType.connecting:
+          case UploadEventType.chipDetected:
+          case UploadEventType.erasing:
+          case UploadEventType.writing:
+          case UploadEventType.verifying:
+          case UploadEventType.resetting:
+            log = TerminalLog.info(event.message);
+            break;
+          case UploadEventType.usbConnected:
+            log = TerminalLog.command(event.message);
+            break;
+          case UploadEventType.compilationFinished:
+            log = TerminalLog.info(event.message);
+            break;
+          case UploadEventType.progress:
+            state = state.copyWith(
+              uploadProgress: event.progress ?? state.uploadProgress,
+            );
+            log = TerminalLog.info(event.message);
+            break;
+          case UploadEventType.warning:
+            log = TerminalLog.warning(event.message);
+            break;
+          case UploadEventType.error:
+            log = TerminalLog.error(event.message);
+            break;
+          case UploadEventType.success:
+            log = TerminalLog.success(event.message);
+            break;
+          case UploadEventType.finished:
+            final isSuccess = (event.exitCode ?? 0) == 0;
+            final durationMs =
+                DateTime.now().difference(startTime).inMilliseconds;
+
+            final result = UploadResult(
+              success: isSuccess,
+              message: event.message,
+              durationMs: durationMs,
+              totalBytes: event.totalBytes ?? 0,
+              chipName: event.chipName,
+              macAddress: event.macAddress,
+            );
+
+            final finalLogs = List<TerminalLog>.from(state.terminalLogs);
+            if (event.message.isNotEmpty &&
+                !finalLogs.any((l) => l.message == event.message)) {
+              finalLogs.add(
+                isSuccess
+                    ? TerminalLog.success(event.message)
+                    : TerminalLog.error(event.message),
+              );
+            }
+
+            state = state.copyWith(
+              terminalLogs: finalLogs,
+              uploadResult: result,
+              isUploading: false,
+              uploadProgress: isSuccess ? 1.0 : state.uploadProgress,
+            );
+            return;
+        }
+
+        if (log != null) {
+          state = state.copyWith(
+            terminalLogs: [...state.terminalLogs, log],
+          );
+        }
+      }
+    } catch (e) {
+      state = state.copyWith(
+        terminalLogs: [
+          ...state.terminalLogs,
+          TerminalLog.error('Upload error: $e'),
+        ],
+        isUploading: false,
+      );
+    } finally {
+      if (state.isUploading) {
+        state = state.copyWith(isUploading: false);
+      }
+    }
+  }
+
+  Future<void> cancelUpload() async {
+    await _uploader.cancelUpload();
+    state = state.copyWith(
+      isUploading: false,
+      terminalLogs: [
+        ...state.terminalLogs,
+        TerminalLog.error('Upload cancelled.'),
+      ],
+    );
+  }
+
+  void toggleTerminal([bool? open]) {
+    state = state.copyWith(isTerminalOpen: open ?? !state.isTerminalOpen);
+  }
+
+  void clearTerminal() {
+    state = state.copyWith(
+      terminalLogs: [],
+      compileResult: null,
+      uploadResult: null,
+    );
   }
 
   void toggleConnection() {

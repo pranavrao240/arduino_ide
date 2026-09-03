@@ -49,64 +49,16 @@ class EditorToolbar extends HookConsumerWidget {
           ),
           const SizedBox(width: 10),
 
-          // Verify Button
-          InkWell(
-            onTap: onVerify ??
-                () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Compiling sketch... Done compiling!'),
-                      duration: Duration(seconds: 1),
-                      backgroundColor: Color(0xff162832),
-                    ),
-                  );
-                },
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              height: 36,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xff182730),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: const Color(0xff223844),
-                ),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.check,
-                    size: 17,
-                    color: Color(0xff22d3ee),
-                  ),
-                  SizedBox(width: 6),
-                  Text(
-                    'Verify',
-                    style: TextStyle(
-                      color: Color(0xff22d3ee),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-
           // Upload Button
           InkWell(
-            onTap: onUpload ??
-                () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Uploading to Arduino Uno on /dev/ttyUSB0... Done!'),
-                      duration: Duration(seconds: 1),
-                      backgroundColor: Color(0xff00cbb8),
-                    ),
-                  );
-                },
+            onTap:
+                (ref.watch(editorProvider).isUploading ||
+                    ref.watch(editorProvider).isVerifying)
+                ? null
+                : (onUpload ??
+                      () {
+                        ref.read(editorProvider.notifier).upload();
+                      }),
             borderRadius: BorderRadius.circular(8),
             child: Container(
               height: 36,
@@ -122,18 +74,31 @@ class EditorToolbar extends HookConsumerWidget {
                   ),
                 ],
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.cloud_upload_outlined,
-                    size: 18,
-                    color: Colors.white,
-                  ),
-                  SizedBox(width: 6),
+                  ref.watch(editorProvider).isUploading
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.cloud_upload_outlined,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                  const SizedBox(width: 6),
                   Text(
-                    'Upload',
-                    style: TextStyle(
+                    ref.watch(editorProvider).isUploading
+                        ? (ref.watch(editorProvider).uploadProgress > 0
+                              ? 'Uploading ${(ref.watch(editorProvider).uploadProgress * 100).toInt()}%'
+                              : 'Uploading...')
+                        : 'Upload',
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
@@ -146,24 +111,32 @@ class EditorToolbar extends HookConsumerWidget {
 
           const Spacer(),
 
-          // Split / Serial button
+          // Split / Terminal toggle button
           InkWell(
-            onTap: onOpenSerial ??
+            onTap:
+                onOpenSerial ??
                 () {
-                  ref.read(editorProvider.notifier).selectNavIndex(2);
+                  ref.read(editorProvider.notifier).toggleTerminal();
                 },
             borderRadius: BorderRadius.circular(8),
             child: Container(
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: const Color(0xff182730),
+                color: ref.watch(editorProvider).isTerminalOpen
+                    ? const Color(0xff223844)
+                    : const Color(0xff182730),
                 borderRadius: BorderRadius.circular(8),
+                border: ref.watch(editorProvider).isTerminalOpen
+                    ? Border.all(color: const Color(0xff00e5ff), width: 1)
+                    : null,
               ),
-              child: const Icon(
-                Icons.calendar_view_week_rounded,
+              child: Icon(
+                Icons.terminal_rounded,
                 size: 18,
-                color: Color(0xff60758a),
+                color: ref.watch(editorProvider).isTerminalOpen
+                    ? const Color(0xff00e5ff)
+                    : const Color(0xff60758a),
               ),
             ),
           ),
@@ -171,7 +144,8 @@ class EditorToolbar extends HookConsumerWidget {
 
           // Add file button
           InkWell(
-            onTap: onAddFile ??
+            onTap:
+                onAddFile ??
                 () {
                   _showNewFileDialog(context, ref);
                 },
@@ -219,10 +193,15 @@ class EditorToolbar extends HookConsumerWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogCtx).pop(),
-            child: const Text('Cancel', style: TextStyle(color: Color(0xff60758a))),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Color(0xff60758a)),
+            ),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xff00cbb8)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xff00cbb8),
+            ),
             onPressed: () {
               final name = controller.text.trim();
               if (name.isNotEmpty) {

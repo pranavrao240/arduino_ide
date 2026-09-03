@@ -1,6 +1,8 @@
 import 'package:arduino_ide/components/device_status_bar.dart';
 import 'package:arduino_ide/components/editor_bottom_nav.dart';
 import 'package:arduino_ide/components/editor_toolbar.dart';
+import 'package:arduino_ide/models/arduino_board.dart';
+import 'package:arduino_ide/providers/editor_provider.dart';
 import 'package:arduino_ide/providers/settings_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -99,7 +101,10 @@ class SettingsPage extends HookConsumerWidget {
                       value: settings.board,
                       items: _boards,
                       onChanged: (val) {
-                        if (val != null) notifier.setBoard(val);
+                        if (val != null) {
+                          notifier.setBoard(val);
+                          ref.read(editorProvider.notifier).selectBoard(ArduinoBoard.fromName(val));
+                        }
                       },
                     ),
 

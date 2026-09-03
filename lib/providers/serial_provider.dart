@@ -80,19 +80,19 @@ final List<SerialLogEntry> _initialSerialLogs = [
 
 class SerialNotifier extends StateNotifier<SerialState> {
   SerialNotifier()
-      : super(
-          SerialState(
-            logs: List.from(_initialSerialLogs),
-            baudRate: '9600',
-            isAutoScroll: true,
-          ),
-        );
+    : super(
+        SerialState(
+          logs: List.from(_initialSerialLogs),
+          baudRate: '9600',
+          isAutoScroll: true,
+        ),
+      );
 
   void setBaudRate(String baud) {
     final now = DateTime.now();
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-    
+
     final updated = List<SerialLogEntry>.from(state.logs)
       ..add(
         SerialLogEntry(
@@ -132,7 +132,8 @@ class SerialNotifier extends StateNotifier<SerialState> {
       );
 
     // Simulate echo or acknowledgement response from microcontroller
-    if (text.toLowerCase().contains('read') || text.toLowerCase().contains('sensor')) {
+    if (text.toLowerCase().contains('read') ||
+        text.toLowerCase().contains('sensor')) {
       updated.add(
         SerialLogEntry(
           timestamp: timeStr,
@@ -159,6 +160,25 @@ class SerialNotifier extends StateNotifier<SerialState> {
     }
 
     state = state.copyWith(logs: updated);
+  }
+
+  void addLogEntry(SerialLogEntry entry) {
+    state = state.copyWith(
+      logs: [...state.logs, entry],
+    );
+  }
+
+  void addSysLog(String message) {
+    final now = DateTime.now();
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    addLogEntry(
+      SerialLogEntry(
+        timestamp: timeStr,
+        type: SerialEntryType.sys,
+        message: message,
+      ),
+    );
   }
 }
 

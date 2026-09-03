@@ -131,7 +131,7 @@ class _LineHighlightLayer extends HookWidget {
                   ),
                   Expanded(
                     child: Container(
-                      color: const Color(0xff3b1f25).withOpacity(0.85),
+                      color: const Color(0xff3b1f25).withValues(alpha: 0.85),
                     ),
                   ),
                 ],
@@ -153,7 +153,7 @@ class _LineHighlightLayer extends HookWidget {
                   ),
                   Expanded(
                     child: Container(
-                      color: const Color(0xff0e343c).withOpacity(0.9),
+                      color: const Color(0xff0e343c).withValues(alpha: 0.9),
                     ),
                   ),
                 ],
